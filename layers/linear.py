@@ -44,10 +44,10 @@ class SNNLinear():
         self.out_features = out_features
         self.final_features = final_features
         self.next_features = next_features
-        self.weight = initialize_parameters_he([self.in_features, self.out_features]).T * 3
-        if self.mode is 'dfa':
+        self.weight = initialize_parameters_he([self.in_features, self.out_features]).T * 0.1 #  prev:0.1 for one conv one linear ; prev:3 for only conv
+        if self.mode == 'dfa':
             self.b = np.random.uniform(-1, 1, [out_features, final_features]) * k2
-        elif self.mode is 'rfa':
+        elif self.mode == 'rfa':
             self.b = np.random.uniform(-1, 1, [self.out_features, self.next_features]) * k2
 
         self.trace_array = np.zeros((in_features, ))
@@ -75,17 +75,16 @@ class SNNLinear():
         #  upper & lower limit of Weight:
         self.wmax = 1
         self.wmin = -1
+        # todo-todo-todo-todo-todo: 感觉这样下去不太行，得加一个正则化项
 
     # Spike Forwards
-    def forward(self, input_spike_state, label, timestamp):
+    def forward(self, input_spike_state, timestamp):
         '''
         :param input_spike_state: vector that contains info of pos & fire or not at a specific timestamp
-        :param label: label of this image
         :param timestamp: time point
         :return: self.output_spike_state, valid_train
         '''
         valid_train = True
-        self.label = label
         self.input_spike_state = input_spike_state # save real time input spike state
         self.t = timestamp # save real time
         
@@ -126,6 +125,8 @@ class SNNLinear():
                         pool_num = int(np.floor(n/self.pool_neu_num)) # judge which pool it belongs to
                         self.pool_spike_num[pool_num] += 1
                         # self.pool_spike_state[n] = 1
+                else:
+                    self.output_spike_state[n] = 0
 
             # Add Spike to Trace:
             self.trace_array += self.input_spike_state
@@ -137,12 +138,14 @@ class SNNLinear():
 
 
     # Calculate Error
-    def calc_error(self, output_error=[]):
+    def calc_error(self, output_error=[], label=-1):
         '''
         Error Calculate:
+        :para label: label of input image
         :param output_error: error of final output layer
         :return: self.error
         '''
+        self.label = label
         if self.class_num != 0: # Output Layer
             for n in range(self.out_features):
                 pool_num = int(np.floor(n / self.pool_neu_num))  # 该神经元属于哪个池
@@ -168,22 +171,23 @@ class SNNLinear():
         self.trace_array_save[self.trace_array_save == 1] = 0
         delta_w = lr * self.trace_array_save * self.error # 这里是self.trace_array_save的每一行与self.error的每一行对应元素相乘
 
-        print(np.shape(self.trace_array_save))
-        print(np.shape(self.error))
-        print(np.shape(delta_w))
-
         self.weight += delta_w
         self.weight[self.weight>self.wmax] = self.wmax
         self.weight[self.weight<self.wmin] = self.wmin
-        
+
+        # todo-todo-todo: obverse
+        # print('linear weight sum: ', np.sum(self.weight))
         return self.weight
     
     
     # Judge Class Success or not
-    def class_result(self):
+    def class_result(self, label=-1):
         # Population Judge
         mx = np.where(self.pool_spike_num == np.max(self.pool_spike_num))
         mx_cnt = len(mx[0])
+
+        if label != -1:
+            self.label = label
         
         if mx_cnt == 1 and mx[0][0] == self.label:
             print('label is: ', self.label, ', predict is:', mx[0][0], '--> right', ', mx_cnt is: ', mx_cnt, ' pool_spike_num: ', self.pool_spike_num)

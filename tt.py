@@ -20,7 +20,7 @@ if __name__ == "__main__":
     # network_architecture = [784, 500, 500, 200]
     network_architecture = [784, 500, 200]
     vth = [5, 15, 15]
-    lr = 1e-3
+    lr = 1e-4
     beta = 3
     tau = 1000
     k2 = 0.1
@@ -54,13 +54,13 @@ if __name__ == "__main__":
         for t in range(255): # or it can be 256
             input_spike_state, input_img_label = input_layer.forward(i, t)
             if np.sum(input_spike_state) != 0:
-                output_spike_state, valid_train = hidden_1.forward(input_spike_state, input_img_label, t)
+                output_spike_state, valid_train = hidden_1.forward(input_spike_state, t)
                 # output_spike_state, _ = hidden_2.forward(output_spike_state, input_img_label, t)
-                output_spike_state, _ = output_layer.forward(output_spike_state, input_img_label, t)
+                output_spike_state, _ = output_layer.forward(output_spike_state, t)
 
-        output_error = output_layer.calc_error()
+        output_error = output_layer.calc_error(label=input_img_label)
         # hidden_2.calc_error(output_error)
-        hidden_1.calc_error(output_error)
+        hidden_1.calc_error(output_error, label=input_img_label)
 
         output_layer.backward(lr)
         # hidden_2.backward(lr)
@@ -92,11 +92,11 @@ if __name__ == "__main__":
         for t in range(255):
             input_spike_state, input_img_label = input_layer.forward(i, t, mode='test')
             if np.sum(input_spike_state) != 0:
-                output_spike_state, valid_train = hidden_1.forward(input_spike_state, input_img_label, t)
+                output_spike_state, valid_train = hidden_1.forward(input_spike_state, t)
                 # output_spike_state, _ = hidden_2.forward(output_spike_state, input_img_label, t)
-                output_spike_state, _ = output_layer.forward(output_spike_state, input_img_label, t)
+                output_spike_state, _ = output_layer.forward(output_spike_state, t)
 
-        predict_ans = output_layer.class_result()
+        predict_ans = output_layer.class_result(label=input_img_label)
         test_acc.append(predict_ans)
 
         hidden_1.clear()

@@ -62,9 +62,13 @@ if __name__ == "__main__":
             for t in range(255):  # or it can be 256
                 input_spike_state, input_img_label = input_layer.forward(i, t)
                 if np.sum(input_spike_state) != 0:
-                    output_spike_state, valid_train = hidden_1.forward(input_spike_state, input_img_label, t)
+                    output_spike_state, valid_train = hidden_1.forward(input_spike_state, input_img_label)
+
+                    # todo-todo-todo: spike_evaluation
+                    print('linear output_spike_state: ', np.sum(output_spike_state))
+
                     # output_spike_state, _ = hidden_2.forward(output_spike_state, input_img_label, t)
-                    output_spike_state, _ = output_layer.forward(output_spike_state, input_img_label, t)
+                    output_spike_state, _ = output_layer.forward(output_spike_state, input_img_label)
 
             error = output_layer.calc_error()
             # error = hidden_2.calc_error(error)

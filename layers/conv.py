@@ -1,6 +1,4 @@
 import numpy as np
-import math
-from functools import reduce
 
 class SNNConv2d():
     def __init__(self, in_channels, out_channels, final_size, input_size, next_size, kernal_size, stride, padding, k1, k2, tau, vth, beta, lr, mode='dfa'):
@@ -38,52 +36,43 @@ class SNNConv2d():
         self.kernal_size = kernal_size
         self.stride = stride
         self.padding = padding
-        self.output_size = (self.input_size + 2*self.padding - self.kernal_size)//self.stride + 1
-        self.conv_cnt = (self.input_size - self.kernal_size)//self.stride # todo vital
+        self.output_size = (self.input_size + 2 * self.padding - self.kernal_size) // self.stride + 1
+        self.conv_cnt = (self.input_size - self.kernal_size) // self.stride  # todo vital
         self.k1 = k1
         self.k2 = k2
         self.tau = tau
         self.vth = vth
-        self.bate = beta
+        self.beta = beta
         self.lr = lr
         self.voltage = np.zeros((self.output_size, self.output_size, self.out_channels))
         self.tmax = np.zeros((self.output_size, self.output_size, self.out_channels))
         self.vmax = np.zeros((self.output_size, self.output_size, self.out_channels))
 
-        # todo todo
-        self.weight = np.random.uniform(-1, 1, (self.kernal_size, self.kernal_size, self.in_channels, self.out_channels)) * k1 # 这个权重初始化这里问题很大
-        # todo todo
+        self.weight = np.random.uniform(-1, 1, (self.kernal_size, self.kernal_size, self.in_channels, self.out_channels)) * k1  # 这个权重初始化这里问题很大
 
-        if mode is 'dfa':
-            self.b = np.random.uniform(-1, 1, [self.output_size*self.output_size*self.out_channels, final_size]) * k2
-        elif mode is 'rfa':
-            self.b = np.random.uniform(-1, 1, [self.output_size*self.output_size*self.out_channels, next_size]) * k2
+        # features should be checked in formula.goodnote
+        if mode == 'dfa':
+            self.b = np.random.uniform(-1, 1, [self.output_size * self.output_size, final_size, self.out_channels]) * k2
+        elif mode == 'rfa':
+            self.b = np.random.uniform(-1, 1, [self.output_size * self.output_size, next_size, self.out_channels]) * k2
 
         self.error = np.zeros((self.output_size, self.output_size, self.out_channels))
+
         self.input_spike_state = np.zeros((self.input_size, self.input_size, self.in_channels))
         self.output_spike_state = np.zeros((self.output_size, self.output_size, self.out_channels))
         self.output_spike_cnt = np.zeros((self.output_size, self.output_size, self.out_channels))
         self.fire_time = np.zeros((self.output_size, self.output_size, self.out_channels))
+        self.t = 0
         self.ti = 0
         self.wmax = 1
         self.wmin = -1
 
-        # todo 关键：由于权值共享，所以trace也不需要这么多！！！
-        # todo 关键：虽然权值共享，但是卷积核的每个元素 应该说是对应于多个突触？？？ 这样Vmax这么求？
-        # todo 关键：接上一个问题，这时候可以一是求出每组对应的Vmax，然后求一个平均，或者说是每次都更新
-        # todo 关键：我先直接用公式推推看！！！
-        self.trace_array = np.zeros((self.in_channels, self.out_channels, self.conv_cnt, self.kernal_size, self.kernal_size))
-        self.trace_array_save = np.zeros((self.in_channels, self.out_channels, self.kernal_size, self.kernal_size))
-        # todo trace这里得大改！！！
+        # todo-回归trace,回归本源, 用来存储exp_decay的积*R, 但这个也不能叫trace了，(*^_^*)
+        # todo-内存占用比较大啊
+        self.trace = np.zeros((self.kernal_size, self.kernal_size, self.in_channels, self.output_size, self.output_size, self.out_channels))
+        self.trace = np.reshape(self.trace, (self.kernal_size, self.kernal_size, self.in_channels, -1))
 
-        # self.trace_array = np.zeros((self.in_channels, self.input_size*self.input_size))
-        # self.trace_array_save = np.zeros((self.out_channels, self.input_size*self.input_size, self.output_size*self.output_size))
-
-
-
-
-
-
+    # todo
     def forward(self, input_spike_state, timestamp=None):
         '''
         :param input_spike_state: shape: (input_size, input_size, in_channels)
@@ -106,56 +95,68 @@ class SNNConv2d():
         # self.output_spike_state[self.output_spike_state >= self.threshold] = 1
 
         # ....................................................................
+        NoneInput = False
         self.input_spike_state = input_spike_state
-        self.t = timestamp
 
-        exp_decay = np.exp(-1.0 * (self.t - self.ti) / self.tau)
-        self.trace_array *= exp_decay
-        self.voltage *= exp_decay
-        # self.voltage += np.dot(self.input_spike_state, self.weight)
-        col_weights = self.weight.reshape([-1, self.out_channels])
-        col_input_spikes = input_spike_state[np.newaxis, :]
-        self.col_voltage = im2col(col_input_spikes, self.kernal_size, self.stride)
-        # 前向过程中权值还是共享了..
-        self.voltage += np.reshape(np.dot(self.col_voltage, col_weights), self.voltage.shape) # update memberance potential
+        if np.sum(self.input_spike_state) == 0:
+            NoneInput = True
+            return NoneInput, self.output_spike_state
+        else:
+            self.t = timestamp
+            exp_decay = np.exp(-1.0 * (self.t - self.ti) / self.tau)
+            self.voltage *= exp_decay
 
-        # 这里reshape只是为了使得后面的循环不要嵌套那么多重，其实开销甚至增大了
-        self.voltage = np.reshape(self.voltage, (-1))
-        self.fire_time = np.reshape(self.fire_time, (-1))
-        self.vmax = np.reshape(self.vmax, (-1))
-        self.tmax = np.reshape(self.tmax, (-1))
-        self.output_spike_state = np.reshape(self.output_spike_state, (-1))
+            col_weights = self.weight.reshape([-1, self.out_channels])
+            col_input_spikes = input_spike_state[np.newaxis, :]
+            self.col_voltage = im2col(col_input_spikes, self.kernal_size, self.stride)
+            # todo sibalaxi deshu forward path, 这个前向的过程应该是没有问题的
+            self.voltage += np.reshape(np.dot(self.col_voltage, col_weights), self.voltage.shape)  # update memberance potential
 
-        for n in range(self.output_size*self.output_size*self.out_channels):
-            # Refractory Period:
-            if self.fire_time[n] !=0 and self.t-self.fire_time[n] <= self.beta:
-                self.voltage[n] = 0
+            # 这里reshape只是为了使得后面的循环不要嵌套那么多重，其实开销甚至增大了
+            # todo-todo-下面这块可以优化一下，没必要每次都计算的
+            self.voltage = np.reshape(self.voltage, (-1))
+            self.fire_time = np.reshape(self.fire_time, (-1))
+            self.vmax = np.reshape(self.vmax, (-1))
+            self.tmax = np.reshape(self.tmax, (-1))
+            self.output_spike_state = np.reshape(self.output_spike_state, (-1))
 
-            # Trace Save & Max- Update:
-            if self.voltage[n] > self.vmax[n]:
-                self.trace_array_save[] # todo Alert
+            for n in range(self.output_size * self.output_size * self.out_channels):
+                # Refractory Period:
+                if self.fire_time[n] != 0 and self.t - self.fire_time[n] <= self.beta:
+                    self.voltage[n] = 0
 
-                self.vmax[n] = self.voltage[n]
-                self.tmax[n] = self.t
+                # Trace Save & Max- Update:
+                if self.voltage[n] > self.vmax[n]:
+                    self.vmax[n] = self.voltage[n]
+                    self.tmax[n] = self.t
+                    self.trace[:, :, :, n] *= exp_decay
 
-            # Output Defination:
-            if self.voltage[n] > self.vth:
-                self.output_spike_state[n] = 1
+                    # todo-得到n原来的位置
+                    # index_c = n // (self.output_size * self.output_size)
+                    index_row = (n % (self.output_size * self.output_size)) // self.output_size
+                    index_column = (n % (self.output_size * self.output_size)) % self.output_size
 
-                self.voltage[n] = 0 # reset the memberance potential to 0 after it fires
-                self.fire_time[n] = self.t
+                    # todo-找到对应的Receptive-field并且加上去
+                    self.trace[:, :, :, n] += self.input_spike_state[index_row * self.stride:index_row * self.stride + self.kernal_size, index_column * self.stride:index_column * self.stride + self.kernal_size,:]
 
-                # todo 这里可以加一个 part 以便构建只有Conv结构的SNN
+                # Output Defination:
+                if self.voltage[n] > self.vth:
+                    self.output_spike_state[n] = 1
+                    self.voltage[n] = 0  # reset the memberance potential to 0 after it fires
+                    self.fire_time[n] = self.t
+                else:
+                    self.output_spike_state[n] = 0
 
-        # Add Spike to Trace:
-        self.trace_array_save = [] # todo Alert
+                    # todo 这里可以加一个 part 以便构建只有Conv结构的SNN, 从ann没有linear层也可以表现得ok看，这个应该也行
 
-        self.ti = self.t # update the ti
+            # todo-得把某些不必要的东西reshape回来
+            self.output_spike_state = np.reshape(self.output_spike_state, (self.output_size, self.output_size, self.out_channels))
 
-        return self.output_spike_state
+            self.ti = self.t  # update the ti
 
+        return NoneInput, self.output_spike_state
 
-
+    # done
     def calc_error(self, output_error=[], mode='dfa'):
         '''
         Output Error Calculate:
@@ -163,52 +164,74 @@ class SNNConv2d():
         :param mode:
         :return: self.error (shape: (self.output_size, self.output_size, self.out_channels))
         '''
-        if mode is 'dfa':
-            feedback_error = np.dot(self.b, output_error)
-            self.error = feedback_error.reshape((self.error.shape))
-        elif mode is 'rfa':
-            feedback_error = np.dot(self.b, output_error)
-            self.error = feedback_error.reshape((self.error.shape))
+        # todo-todo-todo-其实传回来的不是error，而是polarity！！！
+        if mode == 'dfa':
+            for i in range(self.out_channels):
+                self.error[:, :, i] = np.dot(self.b[:, :, i], output_error).reshape((self.output_size, self.output_size))
+        elif mode == 'rfa':
+            for i in range(self.out_channels):
+                self.error[:, :, i] = np.dot(self.b[:, :, i], output_error).reshape((self.output_size, self.output_size))
         return self.error
 
-
-    def backward(self, lr=0): # alpha=1e-3, weight_decay=0.0004
+    # todo-最后一块拼图了
+    def backward(self, lr=0):  # alpha=1e-3, weight_decay=0.0004
         '''
         :param alpha:
         :param weight_decay:
         :return:
         '''
-        # gradient calculate // 公式看我pdf !!!TODO!!!
-        error = np.reshape(self.error, [-1, self.out_channels])
-        self.w_gradient = np.dot(self.col_spike_state.T, error).reshape(self.weight.shape)
-        self.weight *= (1 - weight_decay)
-        self.weight -= alpha * self.w_gradient
+        if lr == 0: lr = self.lr
+        weight_gradient = np.zeros((self.kernal_size, self.kernal_size, self.in_channels, self.out_channels))
+        temp_sum = [[] for i in range(self.out_channels)]
+        polarity_sum = [np.sum(self.error[:, :, i]) for i in range(self.out_channels)]
 
-        #..............................................
-        if lr==0: lr=self.lr
-        self.trace_array_save[self.trace_array_save == 1] = 0
-        delta_w = lr * self.trace_array_save * self.error #
-        delta_w = np.dot(self.col_voltage.T, error).reshape(self.weight.shape)
-        '''
-        关键公式比较：
-        '''
+        for n in range(self.output_size * self.output_size * self.out_channels):
+            index_c = n // (self.output_size * self.output_size)
+            if temp_sum[index_c] == []:
+                temp_sum[index_c] = self.trace[:, :, :, n]
+            else:
+                temp_sum[index_c] += self.trace[:, :, :, n]
 
+        for c in range(self.out_channels):
+            weight_gradient[:, :, :, c] = temp_sum[c] * polarity_sum[c] * lr
 
+        # todo-update weights:
+        weight_gradient = np.array(weight_gradient)
+        self.weight += weight_gradient
 
+        # todo-limits:
+        self.weight[self.weight > self.wmax] = self.wmax
+        self.weight[self.weight < self.wmin] = self.wmin
 
-
+        # print('conv weight sum is:', np.sum(self.weight))
         return self.weight
+
+
+    # todo-todo-todo-clear:
+    def clear(self):
+        self.input_spike_state = np.zeros((self.input_size, self.input_size, self.in_channels))
+        self.output_spike_state = np.zeros((self.output_size, self.output_size, self.out_channels))
+        self.output_spike_cnt = np.zeros((self.output_size, self.output_size, self.out_channels))
+        self.fire_time = np.zeros((self.output_size, self.output_size, self.out_channels))
+        self.voltage = np.zeros((self.output_size, self.output_size, self.out_channels))
+        self.tmax = np.zeros((self.output_size, self.output_size, self.out_channels))
+        self.vmax = np.zeros((self.output_size, self.output_size, self.out_channels))
+        self.trace = np.zeros((self.kernal_size, self.kernal_size, self.in_channels, self.output_size, self.output_size, self.out_channels))
+        self.trace = np.reshape(self.trace, (self.kernal_size, self.kernal_size, self.in_channels, -1))
+        self.ti = 0
+        self.t = 0
+
 
     def load_w_and_b(self, name_save_path, name_w, name_b):
         '''
-        :param name_save_path: 
-        :param name_w: 
-        :param name_b: 
-        :return: 
+        :param name_save_path:
+        :param name_w:
+        :param name_b:
+        :return:
         '''
         self.weight = np.load(name_save_path + name_w)
         self.b = np.load(name_save_path + name_b)
-        
+
     def sava_w_and_b(self, name_save_path, name_w, name_b):
         '''
         :param name_save_path:
@@ -218,7 +241,6 @@ class SNNConv2d():
         '''
         np.save(name_save_path + name_w, self.weight)
         np.save(name_save_path + name_b, self.b)
-
 
 
 # In order to accelerate conv
@@ -235,16 +257,15 @@ def im2col(image, ksize, stride):
 
     return image_col
 
-
-if __name__ == "__main__":
-    out_error = np.random.randint(0, 2, (200,))
-    img = np.random.randint(0, 2, (16,16,1))
-    conv = SNNConv2d(in_channels=1, out_channels=3, final_features=200, input_size=16, kernal_size=3, stride=1, k2=1, threshold=0.25)
-    next = conv.forward(img, 0, 0)
-    error = conv.calc_error(out_error)
-    print('pre weight is:', conv.weight[:,:,0,0])
-    weight = conv.backward()
-    # print('max is:', np.max(next))
-    # print('shape is:', np.shape(next))
-    print('weight is:', weight[:,:,0,0])
-    print(next)
+# if __name__ == "__main__":
+# out_error = np.random.randint(0, 2, (200,))
+# img = np.random.randint(0, 2, (16,16,1))
+# conv = SNNConv2d(in_channels=1, out_channels=3, final_features=200, input_size=16, kernal_size=3, stride=1, k2=1, threshold=0.25)
+# next = conv.forward(img, 0, 0)
+# error = conv.calc_error(out_error)
+# print('pre weight is:', conv.weight[:,:,0,0])
+# weight = conv.backward()
+# # print('max is:', np.max(next))
+# # print('shape is:', np.shape(next))
+# print('weight is:', weight[:,:,0,0])
+# print(next)
