@@ -3,15 +3,10 @@ import math
 from functools import reduce
 
 '''
-Firstly, we just conv the fire time of neurons.
-The same as pooling.
-There's no such thing as 'Batch'.
-
-1. trace and voltage is meaningless?
-sel2. oppo
-
-
-卷积核控制成+ -小数，然后超过某个阈值就发射1，因为我们的自变量是state！！'''
+A failed version 
+I've stopped experimenting with this version.
+25/03/2021
+'''
 
 
 # 这个不行的话就试试rfa!!!! TODO TODO TODO
